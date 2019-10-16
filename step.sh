@@ -4,43 +4,45 @@ set -eu
 case "$OSTYPE" in
   linux*)
     echo "Configuring for Ubuntu"
-    
-    # We create the .conf file with the parameters of the VPN, including the authorization through the txt file
-    cat <<EOF > /etc/openvpn/client.conf
-client
-remote ${host}
-port ${port}
-proto ${proto}
-ca 'ca.crt'
-tls-auth 'ta.key' 1
-auth-user-pass auth.txt
-cipher AES-256-CBC
-comp-lzo yes
-dev tun
-nobind
-persist-key
-persist-tun
-script-security 2
-up /etc/openvpn/update-resolv-conf
-down /etc/openvpn/update-resolv-conf
-down-pre
-verb 3
-EOF
-    # Write the certificate, key and credentials to respective files
+
+    echo "Preparing CA"
     echo "${ca_crt}" > /etc/openvpn/ca.crt
+    echo "Preparing TA"
     echo "${ta_key}" > /etc/openvpn/ta.key
     echo ${user} > /etc/openvpn/auth.txt
     echo ${password} >> /etc/openvpn/auth.txt
 
+    cat <<EOF > /etc/openvpn/client.conf
+client
+dev tun
+remote ${host} ${port} ${proto}
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+comp-lzo
+verb 3
+ca /etc/openvpn/ca.crt
+tls-auth /etc/openvpn/ta.key
+auth-user-pass /etc/openvpn/auth.txt
+cipher AES-256-CBC
+auth SHA256
+tls-client
+remote-cert-tls server
+setenv CLIENT_CERT 0
+key-direction 1
+EOF
     # We start the VPN service. By default, openvpn takes the client.conf file from the path /etc/openvpn
     service openvpn start
 
-    sleep 5
-
-    # We add the DNS IP addresses and search domain to resolve the domains correctly
-    echo "nameserver ${vpn_dns} ${vpn_dns2}
-    search ${search_domain}
-    $(cat /etc/resolv.conf)" > /etc/resolv.conf
+    # bitrise machines exit on error. We don't want this for this script so we can install resolvconf
+    set +e
+    # resolvconf fails in bitrise machines because it can't delete a file shared with the host machine. Let's ignore it    
+    apt install resolvconf -y || true
+    
+    # We add the DNS IP addresses and search domain to resolve the domains correctly and restart resolvconf
+    echo -e "nameserver ${vpn_dns}\nnameserver ${vpn_dns2}\nsearch ${search_domain}\n$(cat /etc/resolv.conf)" > /etc/resolvconf/resolv.conf.d/base
+    service resolvconf restart
     
     if ifconfig | grep tun0 > /dev/null
     then
